@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>🐠 Aquarium</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    canvas { display: block; touch-action: none; }
+    #ui {
+      position: fixed; bottom: max(20px, env(safe-area-inset-bottom));
+      left: 50%; transform: translateX(-50%);
+      display: flex; gap: 10px; z-index: 10;
+    }
+    button {
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.25);
+      color: rgba(255,255,255,0.9);
+      padding: 11px 18px; border-radius: 100px;
+      font-size: 15px; font-family: system-ui, sans-serif;
+      cursor: pointer; backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: background 0.15s, transform 0.1s;
+      user-select: none; -webkit-user-select: none;
+    }
+    button:active { background: rgba(255,255,255,0.28); transform: scale(0.95); }
+    #title {
+      position: fixed; top: max(14px, env(safe-area-inset-top));
+      left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.55);
+      font-family: Georgia, serif; font-size: 12px;
+      letter-spacing: 5px; text-transform: uppercase;
+      pointer-events: none; white-space: nowrap;
+    }
+    #count {
+      position: fixed; top: max(38px, env(safe-area-inset-top) + 24px);
+      left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.3);
+      font-family: system-ui, sans-serif; font-size: 11px;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="title">~ A Q U A R I U M ~</div>
+  <div id="count" id="count"></div>
+  <div id="ui">
+    <button onclick="spawnFish()">🐠 Add Fish</button>
+    <button onclick="bubbleBurst()">💧 Bubbles</button>
+  </div>
+
+<script>
+'use strict';
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const countEl = document.getElementById('count');
+
+let W, H;
+function resize() {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+const rand  = (a, b) => Math.random() * (b - a) + a;
+const randi = (a, b) => Math.floor(rand(a, b + 1));
+const pick  = arr => arr[Math.floor(Math.random() * arr.length)];
+const TAU   = Math.PI * 2;
+
+const FISH_HUES = [20, 38, 0, 120, 210, 330, 270, 175, 50, 180];
+
+const fish     = [];
+const bubbles  = [];
+const seaweeds = [];
+const caustics = [];
+let   t = 0;
+
+class Seaweed {
+  constructor(x) {
+    this.x      = x;
+    this.height = rand(60, 160);
+    this.phase  = rand(0, TAU);
+    this.speed  = rand(0.4, 1.0);
+    this.hue    = randi(110, 145);
+    this.width  = rand(3, 6);
+  }
+  draw(t) {
+    const bot = H - SAND_H;
+    const segs = 8;
+    const segH = this.height / segs;
+    ctx.beginPath();
+    ctx.moveTo(this.x, bot);
+    for (let i = 0; i < segs; i++) {
+      const frac  = (i + 1) / segs;
+      const sway  = Math.sin(t * this.speed + this.phase + frac * Math.PI * 2) * 18 * frac;
+      const py    = bot - (i + 1) * segH;
+      const cpx   = this.x + sway * 2;
+      const cpy   = bot - (i + 0.5) * segH;
+      ctx.quadraticCurveTo(cpx, cpy, this.x + sway, py);
+    }
+    ctx.lineWidth = this.width;
+    ctx.lineCap   = 'round';
+    const g = ctx.createLinearGradient(0, bot - this.height, 0, bot);
+    g.addColorStop(0, `hsla(${this.hue},55%,42%,0.95)`);
+    g.addColorStop(1, `hsla(${this.hue},45%,28%,0.95)`);
+    ctx.strokeStyle = g;
+    ctx.stroke();
+    ctx.beginPath();
+    const tipSway = Math.sin(t * this.speed + this.phase + Math.PI * 2) * 18;
+    ctx.arc(this.x + tipSway, bot - this.height, this.width * 0.9, 0, TAU);
+    ctx.fillStyle = `hsl(${this.hue},60%,50%)`;
+    ctx.fill();
+  }
+}
+
+class Bubble {
+  constructor(x, y) {
+    this.x    = x;
+    this.y    = y;
+    this.r    = rand(2, 6);
+    this.rise = rand(30, 80);
+    this.drift = rand(-15, 15);
+    this.life = 1;
+    this.decay = rand(0.004, 0.012);
+    this.phase = rand(0, TAU);
+  }
+  update(dt) {
+    this.y    -= this.rise  * dt;
+    this.x    += this.drift * dt * Math.sin(t * 2 + this.phase) * 0.3;
+    this.life -= this.decay;
+  }
+  draw() {
+    if (this.life <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = this.life * 0.7;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r, 0, TAU);
+    ctx.strokeStyle = 'rgba(180,220,255,0.8)';
+    ctx.lineWidth   = 1;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(this.x - this.r * 0.3, this.y - this.r * 0.3, this.r * 0.25, 0, TAU);
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+class Fish {
+  constructor(x, y, size) {
+    this.x         = x  ?? rand(W * 0.1, W * 0.9);
+    this.y         = y  ?? rand(H * 0.15, H - SAND_H - 40);
+    this.size      = size ?? rand(20, 55);
+    this.hue       = pick(FISH_HUES);
+    this.sat       = randi(65, 85);
+    this.dir       = Math.random() < 0.5 ? 1 : -1;
+    this.speed     = rand(30, 100) / this.size * 18;
+    this.bobPhase  = rand(0, TAU);
+    this.bobAmp    = rand(4, 12);
+    this.bobSpeed  = rand(0.8, 1.8);
+    this.tailP     = rand(0, TAU);
+    this.tailS     = rand(3.5, 6);
+    this.bubTimer  = rand(2, 8);
+    this.turnTimer = rand(4, 12);
+    this.depth     = rand(0.4, 1.0);
+    this.scaleHue  = this.hue + randi(-20, 20);
+  }
+
+  update(dt) {
+    this.x       += this.dir * this.speed * dt;
+    this.tailP   += this.tailS * dt;
+    this.bubTimer  -= dt;
+    this.turnTimer -= dt;
+
+    if (this.turnTimer <= 0) {
+      if (Math.random() < 0.3) this.dir = -this.dir;
+      this.turnTimer = rand(4, 14);
+    }
+
+    const pad = this.size * 3;
+    if (this.x > W + pad) this.x = -pad;
+    if (this.x < -pad)    this.x = W + pad;
+
+    if (this.bubTimer <= 0) {
+      const bx = this.x + this.dir * this.size * 1.6;
+      const by = this.y;
+      if (bubbles.length < 60) bubbles.push(new Bubble(bx, by));
+      this.bubTimer = rand(3, 10);
+    }
+  }
+
+  draw(t) {
+    const bob = Math.sin(t * this.bobSpeed + this.bobPhase) * this.bobAmp;
+    const y   = this.y + bob;
+    const s   = this.size;
+    const tw  = Math.sin(this.tailP) * 0.25;
+
+    ctx.save();
+    ctx.translate(this.x, y);
+    ctx.scale(this.dir, 1);
+
+    const h = this.hue, sat = this.sat;
+
+    ctx.save();
+    ctx.translate(-s * 1.05, 0);
+    ctx.rotate(tw);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-s * 1.15, -s * 0.85);
+    ctx.lineTo(-s * 0.85, 0);
+    ctx.lineTo(-s * 1.15,  s * 0.85);
+    ctx.closePath();
+    const tg = ctx.createLinearGradient(-s, 0, 0, 0);
+    tg.addColorStop(0, `hsla(${h},${sat}%,55%,0.5)`);
+    tg.addColorStop(1, `hsla(${h},${sat}%,55%,1)`);
+    ctx.fillStyle = tg;
+    ctx.fill();
+    ctx.restore();
+
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s * 1.35, s * 0.65, 0, 0, TAU);
+    const bg = ctx.createRadialGradient(-s * 0.2, -s * 0.2, s * 0.05, 0, 0, s * 1.5);
+    bg.addColorStop(0, `hsl(${h},${sat}%,72%)`);
+    bg.addColorStop(1, `hsl(${h},${sat}%,42%)`);
+    ctx.fillStyle = bg;
+    ctx.fill();
+
+    ctx.save();
+    ctx.clip();
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s * 1.35, s * 0.65, 0, 0, TAU);
+    ctx.clip();
+    for (let i = -2; i <= 3; i++) {
+      ctx.beginPath();
+      ctx.moveTo(s * (i * 0.35 - 0.15), -s * 0.7);
+      ctx.lineTo(s * (i * 0.35 + 0.15), -s * 0.7);
+      ctx.lineTo(s * (i * 0.35 + 0.05),  s * 0.7);
+      ctx.lineTo(s * (i * 0.35 - 0.25),  s * 0.7);
+      ctx.closePath();
+      ctx.fillStyle = `hsla(${this.scaleHue},${sat - 10}%,35%,0.18)`;
+      ctx.fill();
+    }
+    ctx.restore();
+
+    ctx.beginPath();
+    ctx.moveTo(-s * 0.4, -s * 0.6);
+    ctx.quadraticCurveTo(s * 0.15, -s * 1.35, s * 0.65, -s * 0.6);
+    ctx.closePath();
+    ctx.fillStyle = `hsla(${h},${sat}%,60%,0.75)`;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(s * 0.2, s * 0.1);
+    ctx.quadraticCurveTo(s * 0.6,  s * 0.85, -s * 0.1, s * 0.62);
+    ctx.closePath();
+    ctx.fillStyle = `hsla(${h},${sat}%,60%,0.6)`;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(s * 0.72, -s * 0.08, s * 0.2, 0, TAU);
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(s * 0.77, -s * 0.08, s * 0.11, 0, TAU);
+    ctx.fillStyle = '#1a1230';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(s * 0.81, -s * 0.13, s * 0.045, 0, TAU);
+    ctx.fillStyle = 'white';
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(s * 1.3, s * 0.12, s * 0.1, 0.1, Math.PI - 0.1);
+    ctx.strokeStyle = `hsl(${h},${sat}%,32%)`;
+    ctx.lineWidth   = s * 0.07;
+    ctx.lineCap     = 'round';
+    ctx.stroke();
+
+    ctx.restore();
+  }
+}
+
+class Caustic {
+  constructor() {
+    this.x     = rand(0, W);
+    this.phase = rand(0, TAU);
+    this.r     = rand(15, 45);
+    this.speed = rand(0.3, 0.8);
+  }
+  draw(t) {
+    const alpha = (Math.sin(t * this.speed + this.phase) + 1) / 2 * 0.06 + 0.02;
+    ctx.beginPath();
+    ctx.arc(this.x, H - SAND_H + 4, this.r, 0, TAU);
+    ctx.fillStyle = `rgba(130,220,255,${alpha})`;
+    ctx.fill();
+  }
+}
+
+const SAND_H = 40;
+
+function drawBackground(t) {
+  const wg = ctx.createLinearGradient(0, 0, 0, H);
+  wg.addColorStop(0,   '#062040');
+  wg.addColorStop(0.3, '#0a3560');
+  wg.addColorStop(0.7, '#0d4070');
+  wg.addColorStop(1,   '#062a50');
+  ctx.fillStyle = wg;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  for (let i = 0; i < 7; i++) {
+    const rx    = (W / 6) * i + Math.sin(t * 0.15 + i) * 40;
+    const alpha = 0.025 + Math.sin(t * 0.3 + i * 1.3) * 0.01;
+    const spread = rand(0.04, 0.12);
+    ctx.beginPath();
+    ctx.moveTo(rx, 0);
+    ctx.lineTo(rx - W * spread * 0.5, H);
+    ctx.lineTo(rx + W * spread * 0.5, H);
+    ctx.closePath();
+    ctx.fillStyle = `rgba(100,190,255,${alpha})`;
+    ctx.fill();
+  }
+  ctx.restore();
+
+  caustics.forEach(c => c.draw(t));
+
+  const sg = ctx.createLinearGradient(0, H - SAND_H, 0, H);
+  sg.addColorStop(0, '#c4a97a');
+  sg.addColorStop(1, '#9e8050');
+  ctx.fillStyle = sg;
+  ctx.fillRect(0, H - SAND_H, W, SAND_H);
+
+  ctx.save();
+  ctx.globalAlpha = 0.15;
+  for (let i = 0; i < 6; i++) {
+    const ry = H - SAND_H + 6 + i * 6;
+    ctx.beginPath();
+    ctx.moveTo(0, ry);
+    ctx.lineTo(W, ry);
+    ctx.strokeStyle = '#7a5e30';
+    ctx.lineWidth   = 1;
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.save();
+  pebbles.forEach(p => {
+    ctx.beginPath();
+    ctx.ellipse(p.x, H - SAND_H + p.yr, p.rx, p.ry, p.rot, 0, TAU);
+    ctx.fillStyle = p.color;
+    ctx.fill();
+  });
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha = 0.07;
+  for (let i = 0; i < 5; i++) {
+    const sx = ((t * 30 + i * W / 5) % (W + 80)) - 40;
+    ctx.beginPath();
+    ctx.moveTo(sx, 0);
+    ctx.lineTo(sx + 60, 0);
+    ctx.strokeStyle = 'rgba(180,240,255,1)';
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+const pebbles = [];
+
+function initScene() {
+  fish.length = bubbles.length = seaweeds.length = caustics.length = pebbles.length = 0;
+
+  const swCount = Math.max(6, Math.floor(W / 80));
+  const xs = Array.from({length: swCount}, (_, i) => rand(30 + (W / swCount) * i, 30 + (W / swCount) * (i + 0.7)));
+  xs.forEach(x => seaweeds.push(new Seaweed(x)));
+
+  const initCount = Math.min(10, Math.max(5, Math.floor(W / 100)));
+  for (let i = 0; i < initCount; i++) fish.push(new Fish());
+
+  for (let i = 0; i < 18; i++) caustics.push(new Caustic());
+
+  for (let i = 0; i < 40; i++) {
+    pebbles.push({
+      x:     rand(0, W),
+      yr:    rand(4, 14),
+      rx:    rand(3, 10),
+      ry:    rand(2, 5),
+      rot:   rand(0, Math.PI),
+      color: `hsl(${randi(25, 45)},${randi(15,35)}%,${randi(35,55)}%)`
+    });
+  }
+}
+
+function spawnFish(x, y) {
+  if (fish.length >= 22) return;
+  fish.push(new Fish(x, y));
+}
+
+function bubbleBurst(x, y) {
+  const bx = x ?? rand(W * 0.1, W * 0.9);
+  const by = y ?? rand(H * 0.4, H - SAND_H - 10);
+  for (let i = 0; i < 14; i++) {
+    bubbles.push(new Bubble(bx + rand(-30, 30), by + rand(-10, 10)));
+  }
+}
+
+let lastTap = 0;
+canvas.addEventListener('pointerdown', e => {
+  const now = Date.now();
+  if (now - lastTap < 300) {
+    bubbleBurst(e.clientX, e.clientY);
+  } else {
+    bubbles.push(new Bubble(e.clientX, e.clientY));
+  }
+  lastTap = now;
+});
+
+let last = 0;
+
+function frame(ts) {
+  const dt = Math.min((ts - last) / 1000, 0.05);
+  last = ts;
+  t   += dt;
+
+  drawBackground(t);
+  seaweeds.forEach(s => s.draw(t));
+
+  fish.sort((a, b) => a.depth - b.depth);
+  fish.forEach(f => { f.update(dt); f.draw(t); });
+
+  for (let i = bubbles.length - 1; i >= 0; i--) {
+    bubbles[i].update(dt);
+    bubbles[i].draw();
+    if (bubbles[i].life <= 0 || bubbles[i].y < 0) bubbles.splice(i, 1);
+  }
+
+  countEl.textContent = `🐠 ${fish.length}`;
+
+  requestAnimationFrame(frame);
+}
+
+initScene();
+window.addEventListener('resize', () => { resize(); initScene(); });
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
